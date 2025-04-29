@@ -1,0 +1,735 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>City of Harare | Smart Water Distribution System</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body { background: #f0f4f9; min-height: 100vh; }
+    #app { min-height: 80vh; }
+    .navbar-brand img { height: 38px; margin-right: 10px; }
+    .city-header {
+      background: url('https://images.unsplash.com/photo-1506744038136-46273834b3fb?auto=format&fit=crop&w=1200&q=90') center/cover no-repeat;
+      color: white; padding: 2rem 1rem; border-radius: 1rem;
+      box-shadow: 0 4px 15px rgba(0,0,0,0.2); position: relative; overflow: hidden; margin-bottom: 2rem;
+    }
+    .city-header::after {
+      content: ""; background: rgba(13,110,253,0.5); position: absolute; inset: 0; z-index: 0; border-radius: 1rem;
+    }
+    .city-header > * { position: relative; z-index: 1; }
+    .profile-pic { width: 60px; height: 60px; border-radius: 50%; object-fit: cover; border: 3px solid #0d6efd; }
+    .nav-link.active { font-weight: 700; color: #0d6efd !important; }
+    footer { background: #0d6efd; color: white; padding: 1rem 0; text-align: center; margin-top: 3rem; }
+    .btn-rounded { border-radius: 2rem; }
+    .alert-leak { background: #fff3cd; color: #856404; border: 1px solid #ffeeba; }
+    .message-bubble {
+      padding: 0.5rem 1rem; border-radius: 1rem; margin-bottom: 0.5rem; max-width: 75%;
+      word-wrap: break-word;
+    }
+    .message-user { background-color: #0d6efd; color: white; align-self: flex-end; }
+    .message-admin { background-color: #6c757d; color: white; align-self: flex-start; }
+    #messages-container {
+      max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 0.5rem;
+      padding: 0.5rem; background: white; border: 1px solid #dee2e6; border-radius: 0.5rem;
+    }
+    .table th, .table td { vertical-align: middle; }
+    .card-highlight { border-left: 5px solid #0d6efd; }
+    .recommendation-card { background: #fff3cd; border-left: 4px solid #ffc107; }
+    .alert-leak-blink { animation: blinker 1s linear infinite; }
+    @keyframes blinker { 50% { opacity: 0.5; } }
+  </style>
+</head>
+<body>
+<div id="app">
+  <!-- Navbar -->
+  <nav class="navbar navbar-expand-lg navbar-dark bg-primary fixed-top" id="navbar" style="display:none;">
+    <div class="container">
+      <a class="navbar-brand d-flex align-items-center" href="#" id="nav-home">
+        <img src="coh.png" alt="Harare Logo" />
+        City of Harare Water Distribution
+      </a>
+      <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navbarNav">
+        <span class="navbar-toggler-icon"></span>
+      </button>
+      <div class="collapse navbar-collapse" id="navbarNav">
+        <ul class="navbar-nav ms-auto" id="nav-links"></ul>
+      </div>
+    </div>
+  </nav>
+  <main class="container my-5 pt-5" id="main-content"></main>
+</div>
+<footer>
+  &copy; 2025 City of Harare | Smart Water Distribution System | Developed by Alycia Tsatsa
+</footer>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script>
+(() => {
+  // --- Data & Constants ---
+  const USERS = [
+    { username: "admin", password: "admin", role: "admin", name: "City Administrator", img: "https://randomuser.me/api/portraits/men/32.jpg" },
+    { username: "resident1", password: "resident1", role: "resident", name: "Chipo Moyo", img: "https://randomuser.me/api/portraits/women/68.jpg" },
+    { username: "resident2", password: "resident2", role: "resident", name: "Tawanda Ncube", img: "https://randomuser.me/api/portraits/men/65.jpg" }
+  ];
+  const SESSION_KEY = "coh_water_session";
+  const SENSOR_DATA_KEY = "coh_water_sensor_data";
+  const MESSAGES_KEY = "coh_water_messages";
+
+  // --- Utility Functions ---
+  function escapeHtml(text) {
+    if(!text) return "";
+    return text.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;");
+  }
+  function getSession() {
+    const s = localStorage.getItem(SESSION_KEY);
+    return s ? JSON.parse(s) : null;
+  }
+  function setSession(user) { localStorage.setItem(SESSION_KEY, JSON.stringify(user)); }
+  function clearSession() { localStorage.removeItem(SESSION_KEY); }
+  function getSensorData() {
+    const d = localStorage.getItem(SENSOR_DATA_KEY);
+    return d ? JSON.parse(d) : [];
+  }
+  function setSensorData(data) { localStorage.setItem(SENSOR_DATA_KEY, JSON.stringify(data)); }
+  function getMessages() {
+    const m = localStorage.getItem(MESSAGES_KEY);
+    return m ? JSON.parse(m) : [];
+  }
+  function setMessages(data) { localStorage.setItem(MESSAGES_KEY, JSON.stringify(data)); }
+  function formatDate(date) {
+    const d = new Date(date);
+    return d.toLocaleString();
+  }
+  function getUserByUsername(username) {
+    return USERS.find(u => u.username === username);
+  }
+  function leakDetected(flow, pressure) {
+    // Example: Leak if flow > 40 or pressure < 50
+    return flow > 40 || pressure < 50;
+  }
+
+  // --- Navigation ---
+  function renderNav(user) {
+    const nav = document.getElementById('nav-links');
+    let html = '';
+    if(user.role === "admin") {
+      html += `
+        <li class="nav-item"><a class="nav-link active" href="#" id="nav-home">Home</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" id="nav-sensor-data">Manage Sensor Data</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" id="nav-reports">Reports & Analytics</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" id="nav-messages">Messages</a></li>
+        <li class="nav-item"><a class="nav-link text-danger" href="#" id="nav-logout">Logout</a></li>
+      `;
+    } else {
+      html += `
+        <li class="nav-item"><a class="nav-link active" href="#" id="nav-home">Welcome</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" id="nav-my-usage">My Water Usage</a></li>
+        <li class="nav-item"><a class="nav-link" href="#" id="nav-messages">Messages</a></li>
+        <li class="nav-item"><a class="nav-link text-danger" href="#" id="nav-logout">Logout</a></li>
+      `;
+    }
+    nav.innerHTML = html;
+  }
+  function setActiveNav(id) {
+    document.querySelectorAll('#nav-links .nav-link').forEach(link => link.classList.remove('active'));
+    if(id) {
+      const el = document.getElementById(id);
+      if(el) el.classList.add('active');
+    }
+  }
+
+  // --- Login Page ---
+  function renderLogin() {
+    document.getElementById('navbar').style.display = 'none';
+    document.getElementById('main-content').innerHTML = `
+      <div class="row justify-content-center align-items-center" style="min-height:80vh;">
+        <div class="col-md-6 col-lg-5">
+          <div class="card shadow">
+            <div class="city-header text-center mb-0" style="padding:1.5rem;">
+              <img src="coh.png" alt="Harare Logo" style="height:50px; margin-bottom:0.5rem;"/>
+              <h2 class="mb-1">City of Harare</h2>
+              <h5>Smart Water Distribution System</h5>
+            </div>
+            <div class="card-body">
+              <form id="login-form" autocomplete="off">
+                <div class="mb-3">
+                  <label class="form-label">Username</label>
+                  <input class="form-control" id="login-username" required autofocus placeholder="Enter your username"/>
+                </div>
+                <div class="mb-3">
+                  <label class="form-label">Password</label>
+                  <input type="password" class="form-control" id="login-password" required placeholder="Enter your password"/>
+                </div>
+                <button type="submit" class="btn btn-primary w-100 btn-rounded"><i class="fas fa-sign-in-alt"></i> Login</button>
+              </form>
+              <div class="mt-3 text-center text-muted small">
+                <b>Demo accounts:</b><br>
+                Admin: <code>admin/admin</code><br>
+                Resident 1: <code>resident1/resident1</code><br>
+                Resident 2: <code>resident2/resident2</code>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+    document.getElementById('login-form').onsubmit = function(e) {
+      e.preventDefault();
+      const username = document.getElementById('login-username').value.trim();
+      const password = document.getElementById('login-password').value;
+      const user = USERS.find(u => u.username === username && u.password === password);
+      if(user) {
+        setSession(user);
+        renderApp();
+      } else {
+        alert("Invalid username or password.");
+      }
+    };
+  }
+
+  // --- Admin Home ---
+  function renderAdminHome() {
+    setActiveNav('nav-home');
+    document.getElementById('main-content').innerHTML = `
+      <div class="city-header mb-4">
+        <h1 class="display-5 fw-bold"><i class="fas fa-tint"></i> Welcome, ${escapeHtml(getSession().name)}</h1>
+        <p class="lead">Manage and optimize Harare's water distribution with real-time IoT data and resident communication.</p>
+      </div>
+      <div class="row g-4">
+        <div class="col-md-4">
+          <div class="card shadow-sm card-highlight">
+            <div class="card-header"><i class="fas fa-users"></i> Registered Residents</div>
+            <div class="card-body fs-2 text-center">${USERS.filter(u=>u.role==="resident").length}</div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card shadow-sm card-highlight">
+            <div class="card-header"><i class="fas fa-database"></i> Total Sensor Entries</div>
+            <div class="card-body fs-2 text-center" id="admin-sensor-count">0</div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card shadow-sm card-highlight">
+            <div class="card-header"><i class="fas fa-tint-slash"></i> Detected Leaks</div>
+            <div class="card-body fs-2 text-center text-warning" id="admin-leak-count">0</div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-5 card shadow-sm p-4 bg-light rounded">
+        <h4><i class="fas fa-comments"></i> Latest Messages</h4>
+        <div id="admin-latest-messages" style="max-height:250px; overflow-y:auto;"></div>
+        <div class="mt-3 text-muted small">To view all messages or reply, go to the <b>Messages</b> tab.</div>
+      </div>
+      <div class="mt-4 alert alert-info">
+        <b>Tip:</b> Use the <b>Manage Sensor Data</b> tab to add, edit, or review water sensor data for all residents.
+        For detailed analytics and reports, click the <b>Reports & Analytics</b> tab.
+      </div>
+    `;
+    updateAdminStatsAndMessages();
+  }
+  function updateAdminStatsAndMessages() {
+    const data = getSensorData();
+    document.getElementById('admin-sensor-count').textContent = data.length;
+    document.getElementById('admin-leak-count').textContent = data.filter(e=>e.leakDetected).length;
+
+    const messages = getMessages().filter(m=>m.to==="admin").slice(-5).reverse();
+    const container = document.getElementById('admin-latest-messages');
+    if(!messages.length) {
+      container.innerHTML = '<p class="text-muted">No messages yet.</p>';
+      return;
+    }
+    container.innerHTML = messages.map(m=>`
+      <div class="border p-2 rounded mb-2">
+        <small><b>${escapeHtml(getUserByUsername(m.from)?.name||m.from)}</b> <span class="text-muted">(${new Date(m.timestamp).toLocaleString()})</span></small>
+        <p class="mb-0">${escapeHtml(m.message)}</p>
+      </div>
+    `).join('');
+  }
+
+  // --- Sensor Data Management (Admin) ---
+  function renderSensorData() {
+    setActiveNav('nav-sensor-data');
+    document.getElementById('main-content').innerHTML = `
+      <h2><i class="fas fa-database"></i> Manage Sensor Data</h2>
+      <p class="text-muted">Add, edit, and monitor water flow and pressure data from residents.<br>
+      <b>Tip:</b> If flow > 40L/min or pressure < 50kPa, a leak is automatically detected.</p>
+      <div class="card shadow-sm mb-4">
+        <div class="card-header"><i class="fas fa-plus-circle"></i> Add / Edit Sensor Entry</div>
+        <div class="card-body">
+          <form id="sensor-form" class="row g-3">
+            <input type="hidden" id="sensor-edit-index" value="-1" />
+            <div class="col-md-3">
+              <label class="form-label">Resident</label>
+              <select class="form-select" id="sensor-resident" required>
+                <option value="">Select Resident</option>
+                ${USERS.filter(u=>u.role==="resident").map(u=>`<option value="${u.username}">${escapeHtml(u.name)}</option>`).join('')}
+              </select>
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Flow Rate (L/min)</label>
+              <input type="number" class="form-control" id="sensor-flow" min="0" step="0.01" required />
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Pressure (kPa)</label>
+              <input type="number" class="form-control" id="sensor-pressure" min="0" step="0.01" required />
+            </div>
+            <div class="col-md-3">
+              <label class="form-label">Timestamp</label>
+              <input type="datetime-local" class="form-control" id="sensor-timestamp" required />
+            </div>
+            <div class="col-12">
+              <label class="form-label">Notes</label>
+              <input type="text" class="form-control" id="sensor-notes" placeholder="Optional" />
+            </div>
+            <div class="col-12">
+              <button type="submit" class="btn btn-success btn-rounded me-2"><i class="fas fa-save"></i> Save</button>
+              <button type="button" class="btn btn-secondary btn-rounded" id="sensor-cancel" style="display:none;"><i class="fas fa-times"></i> Cancel</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      <div>
+        <h4><i class="fas fa-table"></i> Sensor Data Entries</h4>
+        <div class="table-responsive shadow-sm bg-white rounded">
+          <table class="table table-hover align-middle" id="sensor-table">
+            <thead class="table-primary">
+              <tr>
+                <th>Resident</th>
+                <th>Flow (L/min)</th>
+                <th>Pressure (kPa)</th>
+                <th>Timestamp</th>
+                <th>Leak Detected</th>
+                <th>Notes</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    `;
+    const form = document.getElementById('sensor-form');
+    const cancelBtn = document.getElementById('sensor-cancel');
+    function resetForm() {
+      form.reset();
+      document.getElementById('sensor-edit-index').value = -1;
+      cancelBtn.style.display = 'none';
+    }
+    form.onsubmit = e => {
+      e.preventDefault();
+      const resident = form['sensor-resident'].value;
+      const flow = parseFloat(form['sensor-flow'].value);
+      const pressure = parseFloat(form['sensor-pressure'].value);
+      const timestamp = form['sensor-timestamp'].value;
+      const notes = form['sensor-notes'].value;
+      const leak = leakDetected(flow, pressure);
+      let data = getSensorData();
+      const idx = parseInt(document.getElementById('sensor-edit-index').value);
+      if(idx >= 0) {
+        data[idx] = { username: resident, flow, pressure, timestamp, notes, leakDetected: leak };
+      } else {
+        data.push({ username: resident, flow, pressure, timestamp, notes, leakDetected: leak });
+      }
+      setSensorData(data);
+      resetForm();
+      renderSensorTable();
+    };
+    cancelBtn.onclick = resetForm;
+    function renderSensorTable() {
+      const data = getSensorData();
+      const tbody = document.querySelector("#sensor-table tbody");
+      tbody.innerHTML = data.map((e, i) => `
+        <tr>
+          <td>${escapeHtml(getUserByUsername(e.username)?.name||e.username)}</td>
+          <td>${e.flow}</td>
+          <td>${e.pressure}</td>
+          <td>${formatDate(e.timestamp)}</td>
+          <td>${e.leakDetected ? '<span class="badge bg-danger">Yes</span>' : '<span class="badge bg-success">No</span>'}</td>
+          <td>${escapeHtml(e.notes)}</td>
+          <td>
+            <button class="btn btn-sm btn-primary btn-edit" data-idx="${i}"><i class="fas fa-edit"></i></button>
+            <button class="btn btn-sm btn-danger btn-delete" data-idx="${i}"><i class="fas fa-trash"></i></button>
+          </td>
+        </tr>
+      `).join('');
+      document.querySelectorAll('.btn-edit').forEach(btn => {
+        btn.onclick = () => {
+          const idx = btn.getAttribute('data-idx');
+          const e = data[idx];
+          form['sensor-edit-index'].value = idx;
+          form['sensor-resident'].value = e.username;
+          form['sensor-flow'].value = e.flow;
+          form['sensor-pressure'].value = e.pressure;
+          form['sensor-timestamp'].value = e.timestamp;
+          form['sensor-notes'].value = e.notes;
+          cancelBtn.style.display = '';
+        };
+      });
+      document.querySelectorAll('.btn-delete').forEach(btn => {
+        btn.onclick = () => {
+          if(confirm("Delete this entry?")) {
+            data.splice(btn.getAttribute('data-idx'), 1);
+            setSensorData(data);
+            renderSensorTable();
+            resetForm();
+          }
+        };
+      });
+    }
+    renderSensorTable();
+  }
+
+  // --- Reports & Analytics (Admin) ---
+  function renderAdminReports() {
+    setActiveNav('nav-reports');
+    document.getElementById('main-content').innerHTML = `
+      <h2><i class="fas fa-chart-bar"></i> Reports & Analytics</h2>
+      <div class="alert alert-info mb-4">
+        <b>Instructions:</b> View water usage patterns, pressure monitoring, and leak detection analytics for all residents. 
+        Click on each tab for detailed reports.
+      </div>
+      <ul class="nav nav-tabs mb-3" id="reportTabs" role="tablist">
+        <li class="nav-item" role="presentation">
+          <button class="nav-link active" id="usage-tab" data-bs-toggle="tab" data-bs-target="#usage" type="button" role="tab">Water Usage</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="pressure-tab" data-bs-toggle="tab" data-bs-target="#pressure" type="button" role="tab">Pressure Monitoring</button>
+        </li>
+        <li class="nav-item" role="presentation">
+          <button class="nav-link" id="leak-tab" data-bs-toggle="tab" data-bs-target="#leak" type="button" role="tab">Leak Detection</button>
+        </li>
+      </ul>
+      <div class="tab-content" id="reportTabsContent">
+        <div class="tab-pane fade show active" id="usage" role="tabpanel">
+          <canvas id="admin-usage-chart" height="100"></canvas>
+          <div class="mt-3 text-muted">Click the <b>Pressure Monitoring</b> tab to view pressure trends.</div>
+        </div>
+        <div class="tab-pane fade" id="pressure" role="tabpanel">
+          <canvas id="admin-pressure-chart" height="100"></canvas>
+          <div class="mt-3 text-muted">Click the <b>Leak Detection</b> tab to view recent leak alerts.</div>
+        </div>
+        <div class="tab-pane fade" id="leak" role="tabpanel">
+          <div class="table-responsive">
+            <table class="table table-striped">
+              <thead><tr><th>Resident</th><th>Flow</th><th>Pressure</th><th>Timestamp</th><th>Notes</th></tr></thead>
+              <tbody id="admin-leak-table"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    `;
+    // Draw charts
+    const data = getSensorData();
+    // Usage Chart
+    const usageByUser = {};
+    data.forEach(e => {
+      if(!usageByUser[e.username]) usageByUser[e.username] = [];
+      usageByUser[e.username].push(e.flow);
+    });
+    const usageLabels = Object.keys(usageByUser).map(u=>getUserByUsername(u)?.name||u);
+    const usageAvgs = Object.values(usageByUser).map(arr=>arr.reduce((a,b)=>a+b,0)/arr.length);
+    new Chart(document.getElementById('admin-usage-chart').getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: usageLabels,
+        datasets: [{ label: 'Avg Flow (L/min)', data: usageAvgs, backgroundColor: '#0d6efd' }]
+      }
+    });
+    // Pressure Chart
+    const pressureByUser = {};
+    data.forEach(e => {
+      if(!pressureByUser[e.username]) pressureByUser[e.username] = [];
+      pressureByUser[e.username].push(e.pressure);
+    });
+    const pressureAvgs = Object.values(pressureByUser).map(arr=>arr.reduce((a,b)=>a+b,0)/arr.length);
+    new Chart(document.getElementById('admin-pressure-chart').getContext('2d'), {
+      type: 'bar',
+      data: {
+        labels: usageLabels,
+        datasets: [{ label: 'Avg Pressure (kPa)', data: pressureAvgs, backgroundColor: '#198754' }]
+      }
+    });
+    // Leak Table
+    document.getElementById('admin-leak-table').innerHTML = data.filter(e=>e.leakDetected).map(e=>`
+      <tr>
+        <td>${escapeHtml(getUserByUsername(e.username)?.name||e.username)}</td>
+        <td>${e.flow}</td>
+        <td>${e.pressure}</td>
+        <td>${formatDate(e.timestamp)}</td>
+        <td>${escapeHtml(e.notes)}</td>
+      </tr>
+    `).join('') || '<tr><td colspan="5" class="text-center text-muted">No leaks detected.</td></tr>';
+  }
+
+  // --- Messaging (All Users) ---
+  function renderMessages() {
+    setActiveNav('nav-messages');
+    const user = getSession();
+    const recipients = user.role === "admin"
+      ? USERS.filter(u => u.role === "resident")
+      : USERS.filter(u => u.role === "admin");
+    document.getElementById('main-content').innerHTML = `
+      <h2><i class="fas fa-comments"></i> Messages</h2>
+      <div class="alert alert-info mb-2">
+        <b>Instructions:</b> Select a recipient and send a message. All communication is private and secure.
+      </div>
+      <form id="message-form" class="row g-2 align-items-end mb-3">
+        <div class="col-md-4">
+          <label class="form-label">Send To</label>
+          <select class="form-select" id="message-to" required>
+            <option value="">Select recipient</option>
+            ${recipients.map(u=>`<option value="${u.username}">${escapeHtml(u.name)}</option>`).join('')}
+          </select>
+        </div>
+        <div class="col-md-6">
+          <label class="form-label">Message</label>
+          <input class="form-control" id="message-content" required placeholder="Type your message..."/>
+        </div>
+        <div class="col-md-2">
+          <button type="submit" class="btn btn-primary btn-rounded w-100"><i class="fas fa-paper-plane"></i> Send</button>
+        </div>
+      </form>
+      <div id="messages-container"></div>
+    `;
+    function renderMessagesList() {
+      const all = getMessages();
+      const filtered = all.filter(m => (m.from === user.username || m.to === user.username));
+      const container = document.getElementById('messages-container');
+      if(!filtered.length) {
+        container.innerHTML = '<div class="text-muted">No messages yet.</div>';
+        return;
+      }
+      container.innerHTML = filtered.sort((a,b)=>new Date(a.timestamp)-new Date(b.timestamp)).map(m=>{
+        const isUser = m.from === user.username;
+        return `<div class="message-bubble ${isUser ? 'message-user ms-auto' : 'message-admin'}">
+          <span class="small">${isUser ? 'You' : escapeHtml(getUserByUsername(m.from)?.name||m.from)}:</span>
+          <br>${escapeHtml(m.message)}
+          <div class="text-end small text-muted">${formatDate(m.timestamp)}</div>
+        </div>`;
+      }).join('');
+      container.scrollTop = container.scrollHeight;
+    }
+    renderMessagesList();
+    document.getElementById('message-form').onsubmit = function(e) {
+      e.preventDefault();
+      const to = document.getElementById('message-to').value;
+      const message = document.getElementById('message-content').value;
+      if(!to || !message) return;
+      const all = getMessages();
+      all.push({ from: user.username, to, message, timestamp: new Date().toISOString() });
+      setMessages(all);
+      this.reset();
+      renderMessagesList();
+    };
+  }
+
+  // --- Resident Usage and Recommendations ---
+  function renderResidentUsage() {
+    setActiveNav('nav-my-usage');
+    const user = getSession();
+    const data = getSensorData().filter(e=>e.username===user.username);
+    document.getElementById('main-content').innerHTML = `
+      <div class="city-header mb-4">
+        <div class="d-flex align-items-center">
+          <img src="${user.img}" class="profile-pic me-3"/>
+          <div>
+            <h2 class="mb-0">Hello, ${escapeHtml(user.name)}</h2>
+            <div class="lead">Track your water usage and get smart recommendations!</div>
+          </div>
+        </div>
+      </div>
+      <div class="row g-4">
+        <div class="col-md-7">
+          <div class="card shadow-sm">
+            <div class="card-header"><i class="fas fa-chart-line"></i> Your Water Usage Trend</div>
+            <div class="card-body">
+              <canvas id="usage-chart" height="100"></canvas>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-5">
+          <div class="card shadow-sm recommendation-card">
+            <div class="card-header"><i class="fas fa-lightbulb"></i> Recommendations</div>
+            <div class="card-body" id="recommendations-list"></div>
+          </div>
+        </div>
+      </div>
+      <div class="mt-4">
+        <h4><i class="fas fa-table"></i> Your Sensor Data</h4>
+        <div class="table-responsive bg-white rounded shadow-sm">
+          <table class="table table-hover align-middle">
+            <thead class="table-primary">
+              <tr>
+                <th>Flow (L/min)</th>
+                <th>Pressure (kPa)</th>
+                <th>Timestamp</th>
+                <th>Leak?</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${data.map(e=>`
+                <tr>
+                  <td>${e.flow}</td>
+                  <td>${e.pressure}</td>
+                  <td>${formatDate(e.timestamp)}</td>
+                  <td>${e.leakDetected ? '<span class="badge bg-danger">Yes</span>' : '<span class="badge bg-success">No</span>'}</td>
+                  <td>${escapeHtml(e.notes)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="mt-4 alert alert-info">
+        <b>Tip:</b> If you notice unusual usage or a leak alert, please contact the administrator via the <b>Messages</b> tab.
+      </div>
+    `;
+    // Usage chart
+    const ctx = document.getElementById('usage-chart').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: data.map(e=>formatDate(e.timestamp)),
+        datasets: [
+          { label: 'Flow (L/min)', data: data.map(e=>e.flow), borderColor: '#0d6efd', fill: false },
+          { label: 'Pressure (kPa)', data: data.map(e=>e.pressure), borderColor: '#198754', fill: false }
+        ]
+      }
+    });
+    // Recommendations
+    let recs = [];
+    if(data.length) {
+      const avgFlow = data.reduce((a,e)=>a+e.flow,0)/data.length;
+      if(avgFlow > 35) recs.push("Your average usage is high. Consider checking for leaks or reducing consumption during peak hours.");
+      else if(avgFlow < 10) recs.push("Excellent! Your usage is well below average. Keep conserving water.");
+      else recs.push("Your usage is within normal range. Keep monitoring for any unusual spikes.");
+      if(data.some(e=>e.leakDetected)) recs.push("Leak detected in your recent data! Please inspect your plumbing or contact support.");
+    } else {
+      recs.push("No sensor data recorded yet. Contact admin if this is unexpected.");
+    }
+    document.getElementById('recommendations-list').innerHTML = '<ul class="mb-0">'+recs.map(r=>`<li>${escapeHtml(r)}</li>`).join('')+'</ul>';
+  }
+
+  // --- Resident Home ---
+  function renderResidentHome() {
+    setActiveNav('nav-home');
+    const news = [
+      {
+        title: "Water Conservation Drive Launched",
+        img: "https://images.unsplash.com/photo-1464983953574-0892a716854b?auto=format&fit=crop&w=800&q=80",
+        text: "City of Harare launches a new campaign to encourage residents to conserve water."
+      },
+      {
+        title: "IoT Sensors Reduce Water Losses",
+        img: "https://images.unsplash.com/photo-1509228468518-180dd4864904?auto=format&fit=crop&w=800&q=80",
+        text: "Smart sensors have helped reduce water losses by 17% this year."
+      },
+      {
+        title: "Scheduled Maintenance in Avondale",
+        img: "https://images.unsplash.com/photo-1465101046530-73398c7f28ca?auto=format&fit=crop&w=800&q=80",
+        text: "Routine maintenance will affect water supply in Avondale on Friday."
+      }
+    ];
+    const n = news[Math.floor(Math.random()*news.length)];
+    const user = getSession();
+    document.getElementById('main-content').innerHTML = `
+      <div class="city-header mb-4">
+        <div class="d-flex align-items-center">
+          <img src="${user.img}" class="profile-pic me-3"/>
+          <div>
+            <h2 class="mb-0">Welcome, ${escapeHtml(user.name)}</h2>
+            <div class="lead">Your smart water dashboard is here!</div>
+          </div>
+        </div>
+      </div>
+      <div class="row g-4">
+        <div class="col-md-8">
+          <div class="card shadow-sm card-highlight">
+            <div class="card-header"><i class="fas fa-bullhorn"></i> City News</div>
+            <div class="card-body d-flex align-items-center">
+              <img src="${n.img}" style="height:64px; width:64px; object-fit:cover; border-radius:0.5rem; margin-right:1rem;">
+              <div>
+                <b>${escapeHtml(n.title)}</b><br>
+                <span>${escapeHtml(n.text)}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="col-md-4">
+          <div class="card shadow-sm card-highlight">
+            <div class="card-header"><i class="fas fa-info-circle"></i> Quick Links</div>
+            <div class="card-body">
+              <ul>
+                <li>To view your water usage and recommendations, click <b>My Water Usage</b> in the menu.</li>
+                <li>To contact the administrator, use the <b>Messages</b> tab.</li>
+                <li>For leak alerts, check your usage page regularly.</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  // --- App Router ---
+  function renderApp() {
+    const user = getSession();
+    if(!user) return renderLogin();
+    document.getElementById('navbar').style.display = '';
+    renderNav(user);
+    if(user.role === "admin") renderAdminHome();
+    else renderResidentHome();
+
+    // Navigation events
+    document.getElementById('nav-links').onclick = function(e) {
+      if(!e.target.closest('a')) return;
+      const id = e.target.closest('a').id;
+      if(id === "nav-logout") {
+        clearSession();
+        renderLogin();
+        return;
+      }
+      if(user.role === "admin") {
+        if(id === "nav-home") renderAdminHome();
+        if(id === "nav-sensor-data") renderSensorData();
+        if(id === "nav-reports") renderAdminReports();
+        if(id === "nav-messages") renderMessages();
+      } else {
+        if(id === "nav-home") renderResidentHome();
+        if(id === "nav-my-usage") renderResidentUsage();
+        if(id === "nav-messages") renderMessages();
+      }
+      setActiveNav(id);
+      e.preventDefault();
+    };
+  }
+
+  // --- Initial Data (for demo) ---
+  function seedDemoData() {
+    if(!localStorage.getItem(SENSOR_DATA_KEY)) {
+      setSensorData([
+        { username: "resident1", flow: 12.5, pressure: 150, timestamp: "2025-04-28T10:00", notes: "Normal usage", leakDetected: false },
+        { username: "resident1", flow: 15.8, pressure: 140, timestamp: "2025-04-29T10:30", notes: "Slight increase", leakDetected: false },
+        { username: "resident2", flow: 45.8, pressure: 80, timestamp: "2025-04-29T10:15", notes: "Possible pipe burst", leakDetected: true },
+        { username: "resident2", flow: 38.2, pressure: 120, timestamp: "2025-04-28T09:00", notes: "Normal", leakDetected: false }
+      ]);
+    }
+    if(!localStorage.getItem(MESSAGES_KEY)) {
+      setMessages([
+        { from: "resident1", to: "admin", message: "Hello, I have a question about my last bill.", timestamp: "2025-04-28T12:00" },
+        { from: "admin", to: "resident1", message: "Hi Chipo, please check your usage data under 'My Water Usage'.", timestamp: "2025-04-28T12:30" }
+      ]);
+    }
+  }
+
+  // --- App Start ---
+  seedDemoData();
+  if(getSession()) renderApp();
+  else renderLogin();
+})();
+</script>
+</body>
+</html>
